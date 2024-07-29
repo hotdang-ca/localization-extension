@@ -9,15 +9,17 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "onCommand:extension.modifyArb"
-  ],
+  "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "extension.modifyArb",
         "title": "Modify ARB File"
+      },
+      {
+        "command": "extension.addToArb",
+        "title": "Add selected text to ARB file"
       }
     ]
   },
