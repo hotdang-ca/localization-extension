@@ -3,15 +3,29 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as cp from 'child_process';
 
-const ARB_FILE_PATH = path.join(
-  vscode.workspace.rootPath!,
-  'lib/src/l10n/arb/app_en.arb'
-);
+const getArbPath = (): string | undefined => {
+  if (!vscode.workspace.workspaceFolders) {
+    vscode.window.showErrorMessage('No workspace folder found!');
+    return;
+  }
+
+  return path.join(vscode.workspace.workspaceFolders![0].uri.path, 'lib/src/l10n/arb/app_en.arb');
+};
+
+// const ARB_FILE_PATH = path.join(
+//   vscode.workspace.rootPath!,
+//   'lib/src/l10n/arb/app_en.arb'
+// );
 
 export function activate(context: vscode.ExtensionContext) {
   let disposable = vscode.commands.registerCommand(
     'extension.modifyArb',
     () => {
+      if (!vscode.workspace.workspaceFolders) {
+        vscode.window.showErrorMessage('No workspace folder found!');
+        return;
+      }
+
       vscode.window
         .showInputBox({ prompt: 'Enter the variable name' })
         .then((variableName) => {
@@ -20,6 +34,7 @@ export function activate(context: vscode.ExtensionContext) {
             .then((translation) => {
               if (variableName && translation) {
                 const key = generateKey(variableName);
+                
                 modifyArbFile(key, translation);
                 modifyDartFile(key);
                 runFlutterGenL10n();
@@ -32,7 +47,6 @@ export function activate(context: vscode.ExtensionContext) {
         });
     }
   );
-
   context.subscriptions.push(disposable);
 }
 
@@ -56,29 +70,42 @@ function generateKey(variableName: string) {
 }
 
 function modifyArbFile(key: string, translation: string) {
-  fs.readFile(ARB_FILE_PATH, 'utf8', (err, data) => {
+  if (!getArbPath()) {
+    return
+  }
+
+  fs.readFile(getArbPath()!, 'utf8', (err, data) => {
     if (err) {
       vscode.window.showErrorMessage('Failed to read ARB file');
       return;
     }
 
-    let arbContent = JSON.parse(data);
-    arbContent[key] = translation;
+    let arbContent: any;
 
-    fs.writeFile(
-      ARB_FILE_PATH,
-      JSON.stringify(arbContent, null, 2),
-      'utf8',
-      (err) => {
-        if (err) {
-          vscode.window.showErrorMessage('Failed to write to ARB file');
-        } else {
-          vscode.window.showInformationMessage(
-            'Successfully updated ARB file!'
-          );
+    try {
+      arbContent = JSON.parse(data);
+      arbContent[key] = translation;
+      fs.writeFile(
+        getArbPath()!,
+        JSON.stringify(arbContent, null, 2),
+        'utf8',
+        (err) => {
+          if (err) {
+            vscode.window.showErrorMessage('Failed to write to ARB file');
+          } else {
+            vscode.window.showInformationMessage(
+              'Successfully updated ARB file!'
+            );
+          }
         }
-      }
-    );
+      );
+    } catch (e) {
+      vscode.window.showErrorMessage('Failed to parse ARB file');
+      return
+    }
+
+
+    
   });
 }
 
