@@ -15,11 +15,13 @@
     "commands": [
       {
         "command": "extension.modifyArb",
-        "title": "Modify ARB File"
+        "title": "VSBL-l10n: Manually add a phrase to ARB File",
+        "when": "editorLangId == dart"
       },
       {
         "command": "extension.addToArb",
-        "title": "Add selected text to ARB file"
+        "title": "VSBL-l10n: Add selected text to ARB file",
+        "when": "editorLangId == dart"
       }
     ]
   },

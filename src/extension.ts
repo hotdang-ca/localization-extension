@@ -223,6 +223,7 @@ async function handleVariableString(
     }).then(() => {
       insertImports(editor);
     });
+    return;
   }
 
   // create new key and string value to arb file
@@ -407,7 +408,7 @@ async function addSelectionToArbHandler(context: vscode.ExtensionContext) {
     return;
   }
 
-      // ensure we don't have this phrase already
+  // ensure we don't have this phrase already
   for (const key in arbContent) {
     let keyString = arbContent[key];
     
@@ -418,12 +419,12 @@ async function addSelectionToArbHandler(context: vscode.ExtensionContext) {
     vscode.window.showErrorMessage(`String already exists with key: ${key}`);
     // replace selection with the key we found
     editor.edit((editBuilder) => {
-      editBuilder.replace(selection, `context.l10n.${key}`)
+      editBuilder.replace(selection, `context.l10n.${key}`);
     }).then(() => {
       insertImports(editor);
     });
 
-    break;
+    return;
   }
 
   // create new key and string value to arb file
