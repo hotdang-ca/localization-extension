@@ -90,6 +90,8 @@ function modifyDartFile(key: string) {
 
   editor.edit((editBuilder) => {
     editBuilder.insert(selection.start, replacementString);
+  }).then(() => {
+    insertImports(editor);
   });
 }
 
@@ -192,6 +194,13 @@ async function handleVariableString(
   // ensure we don't have this key already
   if (arbContent[keyName]) {
     vscode.window.showErrorMessage('Key already exists');
+    // insert the key we found
+    editor.edit((editBuilder) => {
+      editBuilder.replace(selection, `context.l10n.${keyName}`);
+    }).then(() => {
+      insertImports(editor);
+    });
+
     return;
   }
 
@@ -207,7 +216,9 @@ async function handleVariableString(
 
     // replace selection with the key we found
     editor.edit((editBuilder) => {
-      editBuilder.replace(selection, `Get.context!.l10n.${key}`);
+      editBuilder.replace(selection, `context.l10n.${key}`);
+    }).then(() => {
+      insertImports(editor);
     });
   }
 
@@ -224,7 +235,7 @@ async function handleVariableString(
   arbContent[keyName] = text;
 
   // replace selection with the key we just created.
-  let replacementString = `Get.context!.l10n.${keyName}`;
+  let replacementString = `context.l10n.${keyName}`;
 
   replacementString += '(';
 
@@ -242,8 +253,9 @@ async function handleVariableString(
   // replace the selection with the key and parameters
   editor.edit((editBuilder) => {
     editBuilder.replace(selection, replacementString);
+  }).then(() => {
+    insertImports(editor);
   });
-
 
   // add the placeholders
   const placeholders: any = {};
@@ -384,7 +396,9 @@ async function addSelectionToArbHandler(context: vscode.ExtensionContext) {
 
     // replace selection with the value of this key
     editor.edit((editBuilder) => {
-      editBuilder.replace(selection, `Get.context!.l10n.${keyName}`);
+      editBuilder.replace(selection, `context.l10n.${keyName}`);
+    }).then(() => {
+      insertImports(editor);
     });
 
     return;
@@ -401,18 +415,57 @@ async function addSelectionToArbHandler(context: vscode.ExtensionContext) {
     vscode.window.showErrorMessage(`String already exists with key: ${key}`);
     // replace selection with the key we found
     editor.edit((editBuilder) => {
-      editBuilder.replace(selection, `Get.context!.l10n.${key}`);
+      editBuilder.replace(selection, `context.l10n.${key}`)
+    }).then(() => {
+      insertImports(editor);
     });
+
+    break;
   }
 
   // create new key and string value to arb file
   arbContent[keyName] = text;
   // replace selection with the key we just created
   editor.edit((editBuilder) => {
-    editBuilder.replace(selection, `Get.context!.l10n.${keyName}`);
+    editBuilder.replace(selection, `context.l10n.${keyName}`);
+  }).then(() => {
+    insertImports(editor);
   });
 
   modifyArbFile(keyName, text);
   modifyDartFile(keyName);
   runFlutterGenL10n();
 }
+
+/**
+ * Inserts required imports into the editor for the l10n package
+ * 
+ * @param editor reference to the vscode editor instance to insert the import into
+ */
+function insertImports(editor: vscode.TextEditor) {
+  // search for the l10n import, and if not, 
+  // add the import line import 'package:vsbl/src/l10n/l10n.dart';
+  const importLine = `import 'package:vsbl/src/l10n/l10n.dart';`;
+  const document = editor.document;
+  let foundImport = false;
+
+  let lastImportBlockLine = 0;
+  for (let i = 0; i < document.lineCount; i++) {
+    const line = document.lineAt(i);
+
+    if (line.text.includes('import')) {
+      lastImportBlockLine = i;
+    }
+
+    if (!foundImport && line.text.includes(importLine)) {
+      foundImport = true;
+    }
+  }
+
+  if (!foundImport) {
+    editor.edit((editBuilder) => {
+      editBuilder.insert(new vscode.Position(lastImportBlockLine + 1, 0), `${importLine}\n`);
+    });
+  }
+}
+
