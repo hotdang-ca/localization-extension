@@ -278,9 +278,6 @@ function toCamelCase(str: string) {
 }
 
 function _handleVariableString(text: string, selection: vscode.Selection, editor: vscode.TextEditor, context: vscode.ExtensionContext) {
-  // show a message
-  vscode.window.showInformationMessage('String contains variables');
-
   // get the variables in the string
   // it'll be typically in the form of '$variableName',
   // but if it has a { char in it, capture everything between the '{' and a closing '}'
@@ -289,10 +286,6 @@ function _handleVariableString(text: string, selection: vscode.Selection, editor
   let variables: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = variableRegex.exec(text))) {
-    // remove non-alpha characters from the variable name, and make it camelCase 
-    // const variableName = match[1].replace(/[^a-zA-Z]/g, '');
-    // variables.push(variableName);
-
     variables.push(match[1]);
   }
 
@@ -300,9 +293,6 @@ function _handleVariableString(text: string, selection: vscode.Selection, editor
     vscode.window.showErrorMessage('No variables found in the string');
     return;
   }
-
-  // print out hte variables found
-  vscode.window.showInformationMessage(`Variables found: ${variables.join(', ')}`);
 
   // use the variable syntax for the arb file to 
   // replace the variables in the string
@@ -380,11 +370,19 @@ function _handleVariableString(text: string, selection: vscode.Selection, editor
 
       arbContent[keyName] = text;
 
-      // replace selection with the key we just created
-      editor.edit((editBuilder) => {
-        editBuilder.replace(selection, `Get.context!.l10n.${keyName}`);
+      // replace selection with the key we just created.
+      // we need to modify the selection with each of the variables 
+      // as parameters,
+      // eg: Get.context!.l10n.keyName(variable1, variable2, variable3, etc)
+      let str = `Get.context!.l10n.${keyName}(`;
+      variables.forEach((variable) => {
+        str += `${variable}, `;
       });
-
+      str = str.slice(0, -2) + ')';
+      editor.edit((editBuilder) => {
+        editBuilder.replace(selection, str);
+      });
+      
       // add the placeholders
       let placeholders: any = {};
       variables.forEach((variable) => {
