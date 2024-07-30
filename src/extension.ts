@@ -15,9 +15,12 @@ export function activate(context: vscode.ExtensionContext) {
     "extension.modifyArb", manuallyAddTranslationHandler);
   let addArbDisposable = vscode.commands.registerCommand(
     "extension.addToArb", addSelectionToArbHandler);
+  let genL10nDisposable = vscode.commands.registerCommand(
+    "extension.genL10n", runFlutterGenL10n);
 
   context.subscriptions.push(modifyArbDisposable);
   context.subscriptions.push(addArbDisposable);
+  context.subscriptions.push(genL10nDisposable);
 }
 
 function generateKey(variableName: string) {
