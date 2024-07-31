@@ -17,12 +17,292 @@ export function activate(context: vscode.ExtensionContext) {
     "extension.addToArb", addSelectionToArbHandler);
   let genL10nDisposable = vscode.commands.registerCommand(
     "extension.genL10n", runFlutterGenL10n);
+  let addAllToArbDisposable = vscode.commands.registerCommand(
+    "extension.addAllToArb", addAllToArbHandler);
 
   context.subscriptions.push(modifyArbDisposable);
   context.subscriptions.push(addArbDisposable);
   context.subscriptions.push(genL10nDisposable);
+  context.subscriptions.push(addAllToArbDisposable);
 }
 
+/**
+ * Handler for the modifyArb command.
+ * 
+ * Prompts for a key, and a string value, and inserts them into the arb file.
+ */
+async function manuallyAddTranslationHandler(
+  _: vscode.ExtensionContext,
+) {
+  const variableName = await vscode.window.showInputBox({ prompt: 'Enter the variable name' });
+  const translatedPhrase = await vscode.window.showInputBox({ prompt: 'Enter the Base (English) translation' });
+
+  // if nul or empty, show error
+  if (!variableName || !translatedPhrase) {
+    vscode.window.showErrorMessage('Both variable name and translation must be provided!');
+    return;
+  }
+
+  const key = generateKey(variableName);
+
+  modifyArbFile(key, translatedPhrase);
+  runFlutterGenL10n();
+}
+
+
+async function addStringToArb(str: string): Promise<string> {
+  str = str.replace(/['"]/g, '');
+
+  // does rhe selection contain a dart variable?
+  // if so, use a different handler for this.
+  if (str.includes('$')) {
+    // handle creating a key for a string with variables
+    // handleVariableString(str);
+    // return;
+    throw new Error('Strings with variables are not yet supported');
+  }
+
+  // We're a simple string with no variables.
+  // generate one for us.
+  let keyName = generateKeyFromString(str);
+
+  // const keyName = await vscode.window.showInputBox({ 
+  //   prompt: 'Enter the key name',
+  //   title: 'key name',
+  // });
+  
+  // if (!keyName || keyName === '') {
+  //   vscode.window.showErrorMessage('You need to specify a');
+  //   throw new Error('You need to specify a key name');
+  // }
+
+  const arbContent = await getArbContentFromWorkspace();
+  
+  // ensure we don't have this key already
+  if (arbContent[keyName]) {
+    // show a dialog requesting a new name; repeat until we get a unique name
+    let newName: string | undefined = '';
+
+    while (true) {
+      newName = await vscode.window.showInputBox({
+        prompt: `Key ${keyName} already exists. Enter a new key name`,
+        title: 'key name',
+      });
+
+      if (!newName || newName === '') {
+        vscode.window.showErrorMessage('You need to specify a key name');
+        throw new Error('You need to specify a key name');
+      }
+
+      if (!arbContent[newName]) {
+        keyName = newName;
+        break;
+      }
+    }
+  }
+
+  // ensure we don't have this phrase already
+  for (const key in arbContent) {
+    let keyValue = arbContent[key];
+    
+    if (keyValue.toLowerCase() !== str.toLowerCase()) {
+      continue;
+    }
+
+    vscode.window.showErrorMessage(`String already exists with key: ${key}`);
+    // modifyDartFile(key);
+    return key;
+  }
+
+  // create new key and string value to arb file
+  arbContent[keyName] = str;
+  
+  // replace selection with the key we just created
+  // editor.edit((editBuilder) => {
+  //   editBuilder.replace(selection, `context.l10n.${keyName}`);
+  // }).then(() => {
+  //   insertImports(editor);
+  // });
+
+  modifyArbFile(keyName, str);
+  return keyName;
+}
+
+/**
+ * Handler for the addSelectionToArb command. 
+ * 
+ * Adds the selected string to the arb file, and replaces the selection with the key.
+ *
+ */
+async function addSelectionToArbHandler(
+  _: vscode.ExtensionContext,
+  andReplaceSelectionWithKey: boolean = true,
+) {
+  // Get text selection
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return;
+  }
+
+  let selection = editor.selection;
+  
+  // if the selection doesn't start and end with ' or ",
+  // but they are adjacent to the selection, modify the
+  // selection to include them
+  let start = selection.start;
+  let end = selection.end;
+
+  if (start.character > 0 && editor.document.getText(new vscode.Range(start.translate(0, -1), start)) === '"' || editor.document.getText(new vscode.Range(start.translate(0, -1), start)) === "'") {
+    start = start.translate(0, -1);
+  }
+  if (end.character < editor.document.lineAt(end.line).range.end.character && editor.document.getText(new vscode.Range(end, end.translate(0, 1))) === '"' || editor.document.getText(new vscode.Range(end, end.translate(0, 1))) === "'") {
+    end = end.translate(0, 1);
+  }
+  selection = new vscode.Selection(start, end);
+  
+  // this now has a hardcoded string enclosed in quotes, 
+  // eg. "Hello, World!"
+  let text = editor.document.getText(selection);
+  if (text.includes('$')) {
+    // handle creating a key for a string with variables
+    handleVariableString(text, selection, editor);
+    return;
+  }
+
+  const key = await addStringToArb(text);
+
+  if (andReplaceSelectionWithKey) {
+    replaceSelectionWithKey(key, selection);
+  }
+
+  runFlutterGenL10n();
+}
+
+/**
+ * Handler for the addAllToArb command.
+ * 
+ * Adds all strings in the active editor to the arb file.
+ */
+function addAllToArbHandler(context: vscode.ExtensionContext) {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return;
+  }
+
+  const arbPath = getArbPath();
+  if (!arbPath) {
+    return;
+  }
+
+  const arbRawData = fs.readFileSync(arbPath, 'utf8');
+  if (!arbRawData) {
+    vscode.window.showErrorMessage('Failed to read ARB file');
+    return;
+  }
+
+  const arbContent = JSON.parse(arbRawData);
+  const keys = Object.keys(arbContent);
+
+  const document = editor.document;
+
+  const keysToAdd: string[] = [];
+
+  for (let i = 0; i < document.lineCount; i++) {
+    const line = document.lineAt(i);
+    let text = line.text;
+
+    // if the line is empty, skip it
+    if (text.trim() === '') {
+      continue;
+    }
+
+    // if the line is a comment, skip it
+    if (text.trim().startsWith('//')) {
+      continue;
+    }
+
+    if (!text.trim().includes('.hardcoded')) {
+      continue;
+    }
+
+    // interpret this line, marking the ''.hardcoded or "".hardcoded for display
+    // in a list of strings to add to the arb file
+
+    // the string wrapping character will be just to the left of the .hardcoded. 
+    // Get that, first.
+    let wrappingCharacter = text[text.indexOf('.hardcoded') - 1];
+
+    // find the range of the string. It will be found with regex, where
+    // we find the wrapping character, followed by any number of characters,
+    // followed by the wrapping character again and .hardcoded.
+    const regexString = `(\\${wrappingCharacter}.*\\${wrappingCharacter})\\.hardcoded`;
+    const regex = new RegExp(regexString);
+    const match = text.match(regex);
+    
+    // add match to the list of strings to add
+    if (match) {
+      keysToAdd.push(match[1]);
+    }
+  }
+
+  // we have all the strings to add. display to the user to select which to add
+  vscode.window.showQuickPick(keysToAdd, {
+    canPickMany: true,
+    placeHolder: 'Select strings to add to arb file'
+  }).then((selectedStrings) => {
+    if (!selectedStrings) {
+      // show an error that you need to select a string
+      vscode.window.showErrorMessage('You need to select a string to add');
+      return;
+    }
+
+    selectedStrings.forEach((string) => {
+      // for each, run it as though it were a selection
+      // and add it to the arb file.
+      
+      // first, select the matching string in the editor
+      let range: vscode.Range | undefined;
+      for (let i = 0; i < document.lineCount; i++) {
+        const line = document.lineAt(i);
+        if (line.text.includes(string)) {
+          range = new vscode.Range(
+            new vscode.Position(i, line.text.indexOf(string)),
+            new vscode.Position(i, line.text.indexOf(string) + string.length)
+          );
+          break;
+        }
+      }
+
+      // then, add the selection to the arb file
+      addSelectionToArbHandler(context);
+    });
+  });
+}
+
+
+function generateKeyFromString(stringValue: string): string {
+  // remove " or ' from the string
+  stringValue.replace(/['"]/g, '');
+
+  // camelCase the string, at every space, and remove non-alphanumeric characters
+  let almostCamelCase = stringValue
+    .split(' ')
+    .map((word) => word.replace(/[^a-zA-Z]/g, ''))
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join('');
+  
+  // make first letter lowercase
+  return almostCamelCase
+    .charAt(0)
+    .toLowerCase() + almostCamelCase.slice(1);
+}
+
+/**
+ * Generates a key based on the variable name and the filename of the active editor
+ * 
+ * @param variableName the variable name to generate a key for
+ * @returns a key based on the variable name and the filename
+ */
 function generateKey(variableName: string) {
   // Get filename from active editor
   let fileName: string | undefined;
@@ -92,7 +372,7 @@ function modifyDartFile(key: string) {
   const replacementString = `context.l10n.${key}`;
 
   editor.edit((editBuilder) => {
-    editBuilder.insert(selection.start, replacementString);
+    editBuilder.replace(selection, replacementString);
   }).then(() => {
     insertImports(editor);
   });
@@ -147,6 +427,10 @@ function toCamelCase(str: string) {
 }
 
 /**
+ * Handles the creation of a key for a string with dart variables in it.
+ * 
+ * This method will insert the key into the arb file, add the placeholders to the arb file,
+ * and replace the selection with the key.
  * 
  * @param text - the original text of the selection
  * @param selection - a reference to the selection, so we can replace it in the editor
@@ -158,8 +442,6 @@ async function handleVariableString(
   selection: vscode.Selection,
   editor: vscode.TextEditor,
 ) {
-  const arbPath = getArbPath();
-
   // get the variables in the string
   // https://regex101.com/r/Kb2egE/1
   const variableRegex = /\${?([a-zA-Z_$][a-zA-Z_$0-9\[\]\.\?\!\'\(\)]+)/g;
@@ -176,34 +458,26 @@ async function handleVariableString(
   }
 
   // request a keyName
-  const keyName: string | undefined = await vscode.window.showInputBox({
-    prompt: 'Enter the key name',
-    title: 'key name',
-  });
 
-  if (!keyName) {
-    vscode.window.showErrorMessage('You need to specify a key name');
-    return;
-  }
+  const keyName = generateKeyFromString(text);
 
-  const rawArbData = fs.readFileSync(arbPath!, 'utf8');
-  if (!rawArbData) {
-    vscode.window.showErrorMessage('Failed to read ARB file');
-    return;
-  }
+  // const keyName: string | undefined = await vscode.window.showInputBox({
+  //   prompt: 'Enter the key name',
+  //   title: 'key name',
+  // });
 
-  const arbContent = JSON.parse(rawArbData);
+  // if (!keyName) {
+  //   vscode.window.showErrorMessage('You need to specify a key name');
+  //   return;
+  // }
 
+  // get the arb file
+  const arbContent = await getArbContentFromWorkspace();
+  
   // ensure we don't have this key already
   if (arbContent[keyName]) {
     vscode.window.showErrorMessage('Key already exists');
-    // insert the key we found
-    editor.edit((editBuilder) => {
-      editBuilder.replace(selection, `context.l10n.${keyName}`);
-    }).then(() => {
-      insertImports(editor);
-    });
-
+    replaceSelectionWithKey(keyName, selection);
     return;
   }
 
@@ -211,18 +485,12 @@ async function handleVariableString(
   for (const key in arbContent) {
     let keyAtIndex = arbContent[key];
 
-    if (keyAtIndex.toLowerCase() !== text.toLocaleLowerCase()) {
+    if (keyAtIndex.toLowerCase() !== text.toLowerCase()) {
       continue;
     }
 
     vscode.window.showErrorMessage(`String already exists with key: ${key}`);
-
-    // replace selection with the key we found
-    editor.edit((editBuilder) => {
-      editBuilder.replace(selection, `context.l10n.${key}`);
-    }).then(() => {
-      insertImports(editor);
-    });
+    replaceSelectionWithKey(key, selection); // TODO: what about the parameters??
     return;
   }
 
@@ -236,22 +504,15 @@ async function handleVariableString(
       .replace(`\${${cleanVariableName}}`, `{${cleanVariableName}}`);
   });
 
-  arbContent[keyName] = text;
+  arbContent[keyName] = text.replace(/['"]/g, '');
 
-  // replace selection with the key we just created.
+  // replace selection with the key we just created, and parameters
   let replacementString = `context.l10n.${keyName}`;
-
   replacementString += '(';
-
-  // and add the variables as parameters
   variables.forEach((variable) => {
     replacementString += `${variable}, `;
   });
-
-  // replace last ','
   replacementString = replacementString.slice(0, -2);
-
-  // close the function call
   replacementString += ')';
 
   // replace the selection with the key and parameters
@@ -261,10 +522,9 @@ async function handleVariableString(
     insertImports(editor);
   });
 
-  // add the placeholders
+  // add the placeholders for the arb file
   const placeholders: any = {};
   variables.forEach((v) => {
-    // remove non-alpha characters from the variable name, and make it camelCase
     const cleanVariableName = v.replace(/[^a-zA-Z]/g, '');
     placeholders[cleanVariableName] = {}; // this is arb syntax. /shrug
   });
@@ -275,6 +535,7 @@ async function handleVariableString(
     placeholders: placeholders
   };
 
+  const arbPath = getArbPath();
   const arbDataString = JSON.stringify(arbContent, null, 2);
   fs.writeFileSync(arbPath!, arbDataString, 'utf8');
   vscode.window.showInformationMessage(
@@ -299,147 +560,6 @@ function getArbPath(): string | undefined {
     'lib/src/l10n/arb/app_en.arb',
   );
 };
-
-/**
- * Handler for the modifyArb command.
- * 
- * Prompts for a key, and a string value, and inserts them into the arb file.
- */
-async function manuallyAddTranslationHandler(context: vscode.ExtensionContext) {
-  if (!vscode.workspace.workspaceFolders) {
-    vscode.window.showErrorMessage('No workspace folder found!');
-    return;
-  }
-
-  const variableName = await vscode.window.showInputBox({ prompt: 'Enter the variable name' });
-  const translatedPhrase = await vscode.window.showInputBox({ prompt: 'Enter the Base (English) translation' });
-
-  // if nul or empty, show error
-  if (!variableName || !translatedPhrase) {
-    vscode.window.showErrorMessage('Both variable name and translation must be provided!');
-    return;
-  }
-
-  const key = generateKey(variableName);
-
-  modifyArbFile(key, translatedPhrase);
-  modifyDartFile(key);
-  runFlutterGenL10n();
-}
-
-/**
- * Handler for the addSelectionToArb command. 
- * 
- * Adds the selected string to the arb file, and replaces the selection with the key.
- *
- */
-async function addSelectionToArbHandler(context: vscode.ExtensionContext) {
-  // Get text selection
-  const editor = vscode.window.activeTextEditor;
-  if (!editor) {
-    return;
-  }
-
-  let selection = editor.selection;
-  
-  // if the selection doesn't start and end with ' or ",
-  // but they are adjacent to the selection, modify the
-  // selection to include them
-  let start = selection.start;
-  let end = selection.end;
-
-  if (start.character > 0 && editor.document.getText(new vscode.Range(start.translate(0, -1), start)) === '"' || editor.document.getText(new vscode.Range(start.translate(0, -1), start)) === "'") {
-    start = start.translate(0, -1);
-  }
-  if (end.character < editor.document.lineAt(end.line).range.end.character && editor.document.getText(new vscode.Range(end, end.translate(0, 1))) === '"' || editor.document.getText(new vscode.Range(end, end.translate(0, 1))) === "'") {
-    end = end.translate(0, 1);
-  }
-  selection = new vscode.Selection(start, end);
-  
-  let text = editor.document.getText(selection);
-
-  // remove leading and trailing quotes from text, though.
-  // Not the selection... just the text
-  if (text.startsWith('"') || text.startsWith("'")) {
-    text = text.slice(1);
-  }
-  if (text.endsWith('"') || text.endsWith("'")) {
-    text = text.slice(0, -1);
-  }
-
-  // does rhe selection contain a dart variable?
-  // if so, use a different handler for this.
-  if (text.includes('$')) {
-    // handle creating a key for a string with variables
-    handleVariableString(text, selection, editor);
-    return;
-  }
-
-  // We're a simple string. Handle it as such.
-  const keyName = await vscode.window.showInputBox({ 
-    prompt: 'Enter the key name',
-    title: 'key name',
-  });
-  
-  if (!keyName || keyName === '') {
-    vscode.window.showErrorMessage('You need to specify a');
-    return;
-  }
-
-  const arbData = fs.readFileSync(getArbPath()!, 'utf8');
-  if (!arbData) {
-    vscode.window.showErrorMessage('Failed to read ARB file');
-    return;
-  }
-
-  const arbContent = JSON.parse(arbData);
-  
-  // ensure we don't have this key already
-  if (arbContent[keyName]) {
-    vscode.window.showErrorMessage('Key already exists');
-
-    // replace selection with the value of this key
-    editor.edit((editBuilder) => {
-      editBuilder.replace(selection, `context.l10n.${keyName}`);
-    }).then(() => {
-      insertImports(editor);
-    });
-
-    return;
-  }
-
-  // ensure we don't have this phrase already
-  for (const key in arbContent) {
-    let keyString = arbContent[key];
-    
-    if (keyString.toLowerCase() !== text.toLocaleLowerCase()) {
-      continue;
-    }
-
-    vscode.window.showErrorMessage(`String already exists with key: ${key}`);
-    // replace selection with the key we found
-    editor.edit((editBuilder) => {
-      editBuilder.replace(selection, `context.l10n.${key}`);
-    }).then(() => {
-      insertImports(editor);
-    });
-
-    return;
-  }
-
-  // create new key and string value to arb file
-  arbContent[keyName] = text;
-  // replace selection with the key we just created
-  editor.edit((editBuilder) => {
-    editBuilder.replace(selection, `context.l10n.${keyName}`);
-  }).then(() => {
-    insertImports(editor);
-  });
-
-  modifyArbFile(keyName, text);
-  modifyDartFile(keyName);
-  runFlutterGenL10n();
-}
 
 /**
  * Inserts required imports into the editor for the l10n package
@@ -471,5 +591,42 @@ function insertImports(editor: vscode.TextEditor) {
       editBuilder.insert(new vscode.Position(lastImportBlockLine + 1, 0), `${importLine}\n`);
     });
   }
+}
+
+/**
+ * Retrieves the content of the arb file in the workspace folder.
+ * @returns the content of the arb file as an object
+ */
+function getArbContentFromWorkspace(): any {
+  const arbPath = getArbPath();
+  const arbData = fs.readFileSync(arbPath!, 'utf8');
+  if (!arbData) {
+    vscode.window.showErrorMessage('Failed to read ARB file');
+    throw new Error('Failed to read ARB file');
+  }
+
+  return JSON.parse(arbData);
+}
+
+/**
+ * Replaces the current selection in the editor with the specified key
+ * 
+ * @param key the key to insert into the dart file
+ * @param selection the selection to replace with the key
+ */
+function replaceSelectionWithKey(
+  key: string,
+  selection: vscode.Selection,
+) {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return;
+  }
+
+  editor.edit((editBuilder) => {
+    editBuilder.replace(selection, `context.l10n.${key}`);
+  }).then(() => {
+    insertImports(editor);
+  });
 }
 

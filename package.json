@@ -22,6 +22,16 @@
         "command": "extension.addToArb",
         "title": "VSBL-l10n: Add selected text to ARB file",
         "when": "editorLangId == dart"
+      },
+      {
+        "command": "extension.genL10n",
+        "title": "VSBL-l10n: Run Flutter gen-l10n",
+        "when": "editorLangId == dart"
+      },
+      {
+        "command": "extension.addAllToArb",
+        "title": "VSBL-l10n: Scan file for hardcoded strings and add to ARB file",
+        "when": "editorLangId == dart"
       }
     ]
   },
