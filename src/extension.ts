@@ -4,6 +4,20 @@ import * as path from 'path';
 import * as cp from 'child_process';
 
 /**
+ * The token used to identify translatable strings in the editor
+ */
+const translatableToken = '.translatable';
+
+/**
+ * The prefix used for replacing the key in the editor.
+ * 
+ * This could be a preference in the future. For now, it's hardcoded
+ * to the l10n instance in the LocalizationProvider class.
+ * 
+ */
+const translationPrefix = 'LocalizationProvider.instance.l10n';
+
+/**
  * Main Entrypoint for the extension
  * @param context - the vscode extension context
  */
@@ -80,32 +94,45 @@ async function addStringToArb(str: string): Promise<string> {
   
   // ensure we don't have this key already
   if (arbContent[keyName]) {
+    return keyName;
+
     // show a dialog requesting a new name; repeat until we get a unique name
-    let newName: string | undefined = '';
+    // let newName: string | undefined = '';
 
-    while (true) {
-      newName = await vscode.window.showInputBox({
-        prompt: `Key ${keyName} already exists. Enter a new key name`,
-        title: 'key name',
-      });
+    // while (true) {
+    //   newName = await vscode.window.showInputBox({
+    //     prompt: `Key ${keyName} already exists. Enter a new key name`,
+    //     title: 'key name',
+    //   });
 
-      if (!newName || newName === '') {
-        vscode.window.showErrorMessage('You need to specify a key name');
-        throw new Error('You need to specify a key name');
-      }
+    //   if (!newName || newName === '') {
+    //     vscode.window.showErrorMessage('You need to specify a key name');
+    //     throw new Error('You need to specify a key name');
+    //   }
 
-      if (!arbContent[newName]) {
-        keyName = newName;
-        break;
-      }
-    }
+    //   if (!arbContent[newName]) {
+    //     keyName = newName;
+    //     break;
+    //   }
+    // }
   }
 
   // ensure we don't have this phrase already
   for (const key in arbContent) {
-    let keyValue = arbContent[key];
+    if (key.startsWith("@")) {
+      // it's a parameters key, skip it
+      continue;
+    }
     
-    if (keyValue.toLowerCase() !== str.toLowerCase()) {
+    let kv: string = arbContent[key];
+    
+    try {
+      if (kv.toLowerCase() !== str.toLowerCase()) {
+        continue;
+      }
+    } catch (_) {
+      // show user message
+      vscode.window.showErrorMessage(`Error comparing strings: ${kv}, ${str}`);
       continue;
     }
 
@@ -137,42 +164,45 @@ async function addStringToArb(str: string): Promise<string> {
 async function addSelectionToArbHandler(
   _: vscode.ExtensionContext,
   andReplaceSelectionWithKey: boolean = true,
+  withSelection: vscode.Selection | undefined = undefined
 ) {
-  // Get text selection
+  
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     return;
   }
-
-  let selection = editor.selection;
   
-  // if the selection doesn't start and end with ' or ",
-  // but they are adjacent to the selection, modify the
-  // selection to include them
-  let start = selection.start;
-  let end = selection.end;
-
-  if (start.character > 0 && editor.document.getText(new vscode.Range(start.translate(0, -1), start)) === '"' || editor.document.getText(new vscode.Range(start.translate(0, -1), start)) === "'") {
-    start = start.translate(0, -1);
+  if (!withSelection) {
+    // Get text selection, if one wasn't provided
+    withSelection = editor.selection;
+    // if the selection doesn't start and end with ' or ",
+    // but they are adjacent to the selection, modify the
+    // selection to include them
+    let start = withSelection.start;
+    let end = withSelection.end;
+  
+    if (start.character > 0 && editor.document.getText(new vscode.Range(start.translate(0, -1), start)) === '"' || editor.document.getText(new vscode.Range(start.translate(0, -1), start)) === "'") {
+      start = start.translate(0, -1);
+    }
+    if (end.character < editor.document.lineAt(end.line).range.end.character && editor.document.getText(new vscode.Range(end, end.translate(0, 1))) === '"' || editor.document.getText(new vscode.Range(end, end.translate(0, 1))) === "'") {
+      end = end.translate(0, 1);
+    }
+    withSelection = new vscode.Selection(start, end);
   }
-  if (end.character < editor.document.lineAt(end.line).range.end.character && editor.document.getText(new vscode.Range(end, end.translate(0, 1))) === '"' || editor.document.getText(new vscode.Range(end, end.translate(0, 1))) === "'") {
-    end = end.translate(0, 1);
-  }
-  selection = new vscode.Selection(start, end);
   
   // this now has a hardcoded string enclosed in quotes, 
   // eg. "Hello, World!"
-  let text = editor.document.getText(selection);
+  let text = editor.document.getText(withSelection);
   if (text.includes('$')) {
     // handle creating a key for a string with variables
-    handleVariableString(text, selection, editor);
+    handleVariableString(text, withSelection, editor);
     return;
   }
 
-  const key = await addStringToArb(text);
+  const key = await addStringToArb(text.replace(translatableToken, ''));
 
   if (andReplaceSelectionWithKey) {
-    replaceSelectionWithKey(key, selection);
+    replaceSelectionWithKey(key, withSelection);
   }
 
   runFlutterGenL10n();
@@ -188,23 +218,8 @@ function addAllToArbHandler(context: vscode.ExtensionContext) {
   if (!editor) {
     return;
   }
-
-  const arbPath = getArbPath();
-  if (!arbPath) {
-    return;
-  }
-
-  const arbRawData = fs.readFileSync(arbPath, 'utf8');
-  if (!arbRawData) {
-    vscode.window.showErrorMessage('Failed to read ARB file');
-    return;
-  }
-
-  const arbContent = JSON.parse(arbRawData);
-  const keys = Object.keys(arbContent);
-
+  
   const document = editor.document;
-
   const keysToAdd: string[] = [];
 
   for (let i = 0; i < document.lineCount; i++) {
@@ -217,50 +232,63 @@ function addAllToArbHandler(context: vscode.ExtensionContext) {
     }
 
     // if the line is a comment, skip it
-    if (text.trim().startsWith('//')) {
+    if (text.trim().startsWith("//")) {
       continue;
     }
 
-    if (!text.trim().includes('.hardcoded')) {
+    // if anything else, check if it contains a .translatable.
+    // if not, skip it
+    if (!text.trim().includes(translatableToken)) {
       continue;
     }
-
-    // interpret this line, marking the ''.hardcoded or "".hardcoded for display
-    // in a list of strings to add to the arb file
-
-    // the string wrapping character will be just to the left of the .hardcoded. 
-    // Get that, first.
-    let wrappingCharacter = text[text.indexOf('.hardcoded') - 1];
+    
+    // are we single ' or double " wrapped?
+    let wrappingCharacter = text[text.indexOf(translatableToken) - 1];
 
     // find the range of the string. It will be found with regex, where
     // we find the wrapping character, followed by any number of characters,
-    // followed by the wrapping character again and .hardcoded.
-    const regexString = `(\\${wrappingCharacter}.*\\${wrappingCharacter})\\.hardcoded`;
+    // followed by the wrapping character again and .translatable.
+    const regexString = `(\\${wrappingCharacter}.*\\${wrappingCharacter})\\${translatableToken}`;
     const regex = new RegExp(regexString);
     const match = text.match(regex);
     
     // add match to the list of strings to add
     if (match) {
-      keysToAdd.push(match[1]);
+      keysToAdd.push(match[0]); // the whole string with .translatable in it
     }
+  }
+  
+  // if we have no matches, show an error
+  if (keysToAdd.length === 0) {
+    vscode.window.showErrorMessage('No strings found to add.\n\nDid you forget to add the .translatable token?');
+    return;
   }
 
   // we have all the strings to add. display to the user to select which to add
-  vscode.window.showQuickPick(keysToAdd, {
+  const cleanedStrings = keysToAdd.map((key) => key.slice(1, key.indexOf(translatableToken) - 1));
+  vscode.window.showQuickPick(cleanedStrings, {
     canPickMany: true,
-    placeHolder: 'Select strings to add to arb file'
-  }).then((selectedStrings) => {
+    placeHolder: 'Select strings to add to arb file',
+  }).then(async (selectedStrings) => {
     if (!selectedStrings) {
       // show an error that you need to select a string
       vscode.window.showErrorMessage('You need to select a string to add');
       return;
     }
 
-    selectedStrings.forEach((string) => {
+    // for the select strings, find the corresponding .translatable string
+
+    for (const selectedString of selectedStrings) {
+      const string = keysToAdd.find((key) => key.includes(selectedString));
+      if (!string) {
+        continue;
+      }
+
       // for each, run it as though it were a selection
       // and add it to the arb file.
       
-      // first, select the matching string in the editor
+      // first, modify the editor selection to
+      // where this instance of the string is
       let range: vscode.Range | undefined;
       for (let i = 0; i < document.lineCount; i++) {
         const line = document.lineAt(i);
@@ -269,13 +297,20 @@ function addAllToArbHandler(context: vscode.ExtensionContext) {
             new vscode.Position(i, line.text.indexOf(string)),
             new vscode.Position(i, line.text.indexOf(string) + string.length)
           );
-          break;
+
+          // then, select the string
+          editor.selection = new vscode.Selection(range.start, range.end);
+
+          // scroll to the selection
+          editor.revealRange(range);
+
+          await addSelectionToArbHandler(context, true, editor.selection);
+
+          // and then wait a bit before moving on
+          await new Promise((resolve) => setTimeout(resolve, 250));
         }
       }
-
-      // then, add the selection to the arb file
-      addSelectionToArbHandler(context);
-    });
+    }
   });
 }
 
@@ -369,7 +404,7 @@ function modifyDartFile(key: string) {
   }
 
   const selection = editor.selection;
-  const replacementString = `context.l10n.${key}`;
+  const replacementString = `${translationPrefix}.${key}`;
 
   editor.edit((editBuilder) => {
     editBuilder.replace(selection, replacementString);
@@ -507,7 +542,7 @@ async function handleVariableString(
   arbContent[keyName] = text.replace(/['"]/g, '');
 
   // replace selection with the key we just created, and parameters
-  let replacementString = `context.l10n.${keyName}`;
+  let replacementString = `${translationPrefix}.${keyName}`;
   replacementString += '(';
   variables.forEach((variable) => {
     replacementString += `${variable}, `;
@@ -624,7 +659,7 @@ function replaceSelectionWithKey(
   }
 
   editor.edit((editBuilder) => {
-    editBuilder.replace(selection, `context.l10n.${key}`);
+    editBuilder.replace(selection, `${translationPrefix}.${key}`);
   }).then(() => {
     insertImports(editor);
   });

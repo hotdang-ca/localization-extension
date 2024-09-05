@@ -1,8 +1,10 @@
 {
-  "name": "localization",
-  "displayName": "localization",
-  "description": "A VSCode extension for modifying ARB translation files in Flutter projects.",
-  "version": "0.0.1",
+  "name": "vsbl-l10n",
+  "displayName": "VSBL-l10n",
+  "icon": "vsbl-translate-icon.png",
+  "publisher": "vsbl",
+  "description": "A VSCode extension for modifying VSBL ARB translation files in Flutter projects.",
+  "version": "1.0.4",
   "engines": {
     "vscode": "^1.78.0"
   },
@@ -36,12 +38,18 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "compile": "npm run check-types && node esbuild.js",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "package": "npm run check-types && node esbuild.js --production --allow-missing-repository && cp vsbl-translate-icon.png out",
+    "pretest": "npm run compile && npm run lint",
+    "test": "node ./out/test/runTest.js",
+    "vscode:package": "npm run vscode:prepublish && vsce package --allow-missing-repository",
+    "vscode:prepublish": "npm run package",
+    "vscode:publish": "npm run scode:prepublish && vsce publish",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "watch": "npm-run-all -p watch:*"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",
@@ -51,10 +59,11 @@
     "@typescript-eslint/eslint-plugin": "^5.59.1",
     "@typescript-eslint/parser": "^5.59.1",
     "@vscode/test-electron": "^2.3.0",
+    "@vscode/vsce": "^2.31.1",
+    "esbuild": "^0.23.0",
     "eslint": "^8.39.0",
     "glob": "^8.1.0",
     "mocha": "^10.2.0",
     "typescript": "^5.0.4"
-  },
-  "dependencies": {}
+  }
 }
