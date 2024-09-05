@@ -603,8 +603,9 @@ function getArbPath(): string | undefined {
  */
 function insertImports(editor: vscode.TextEditor) {
   // search for the l10n import, and if not, 
-  // add the import line import 'package:vsbl/src/l10n/l10n.dart';
-  const importLine = `import 'package:vsbl/src/l10n/l10n.dart';`;
+  // add to the top of the file
+
+  const importLine = `import 'package:vsbl/src/core/util/localization_provider.dart';`;
   const document = editor.document;
   let foundImport = false;
 
