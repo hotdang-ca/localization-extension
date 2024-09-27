@@ -4,7 +4,7 @@
   "icon": "vsbl-translate-icon.png",
   "publisher": "vsbl",
   "description": "A VSCode extension for modifying VSBL ARB translation files in Flutter projects.",
-  "version": "1.0.6",
+  "version": "1.0.9",
   "engines": {
     "vscode": "^1.78.0"
   },
@@ -32,7 +32,7 @@
       },
       {
         "command": "extension.addAllToArb",
-        "title": "VSBL-l10n: Scan file for hardcoded strings and add to ARB file",
+        "title": "VSBL-l10n: Scan file for translatable strings and add to ARB file",
         "when": "editorLangId == dart"
       }
     ]
@@ -44,9 +44,9 @@
     "package": "npm run check-types && node esbuild.js --production --allow-missing-repository && cp vsbl-translate-icon.png out",
     "pretest": "npm run compile && npm run lint",
     "test": "node ./out/test/runTest.js",
-    "vscode:package": "npm run vscode:prepublish && vsce package --allow-missing-repository",
     "vscode:prepublish": "npm run package",
-    "vscode:publish": "npm run scode:prepublish && vsce publish",
+    "vscode:package": "npm run vscode:prepublish && vsce package --allow-missing-repository",
+    "vscode:publish": "npm run vscode:prepublish && vsce publish",
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "watch": "npm-run-all -p watch:*"
