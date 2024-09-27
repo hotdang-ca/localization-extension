@@ -198,8 +198,9 @@ async function addSelectionToArbHandler(
     handleVariableString(text, withSelection, editor);
     return;
   }
-
-  const key = await addStringToArb(text.trim().replace(translatableToken, ''));
+  
+  text = text.replace(translatableToken, '').replace(/['"]/g, '').trim();
+  const key = await addStringToArb(text);
 
   if (andReplaceSelectionWithKey) {
     replaceSelectionWithKey(key, withSelection);
