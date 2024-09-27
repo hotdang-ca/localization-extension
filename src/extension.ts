@@ -198,8 +198,9 @@ async function addSelectionToArbHandler(
     handleVariableString(text, withSelection, editor);
     return;
   }
-
-  const key = await addStringToArb(text.replace(translatableToken, ''));
+  
+  text = text.replace(translatableToken, '').replace(/['"]/g, '').trim();
+  const key = await addStringToArb(text);
 
   if (andReplaceSelectionWithKey) {
     replaceSelectionWithKey(key, withSelection);
@@ -220,55 +221,25 @@ function addAllToArbHandler(context: vscode.ExtensionContext) {
   }
   
   const document = editor.document;
-  const keysToAdd: string[] = [];
-
-  for (let i = 0; i < document.lineCount; i++) {
-    const line = document.lineAt(i);
-    let text = line.text;
-
-    // if the line is empty, skip it
-    if (text.trim() === '') {
-      continue;
-    }
-
-    // if the line is a comment, skip it
-    if (text.trim().startsWith("//")) {
-      continue;
-    }
-
-    // if anything else, check if it contains a .translatable.
-    // if not, skip it
-    if (!text.trim().includes(translatableToken)) {
-      continue;
-    }
-    
-    // are we single ' or double " wrapped?
-    let wrappingCharacter = text[text.indexOf(translatableToken) - 1];
-
-    // find the range of the string. It will be found with regex, where
-    // we find the wrapping character, followed by any number of characters,
-    // followed by the wrapping character again and .translatable.
-    const regexString = `(\\${wrappingCharacter}.*\\${wrappingCharacter})\\${translatableToken}`;
-    const regex = new RegExp(regexString);
-    const match = text.match(regex);
-    
-    // add match to the list of strings to add
-    if (match) {
-      keysToAdd.push(match[0]); // the whole string with .translatable in it
-    }
+  const matches: string[] = [];
+  const regex = /(["'].*["'])\n?\s*\.translatable/gm;
+  const documentContents = document.getText();
+  const regexMatches = documentContents.match(new RegExp(regex, 'gm'));
+  if (regexMatches) {
+    matches.push(...regexMatches);
   }
   
-  // if we have no matches, show an error
-  if (keysToAdd.length === 0) {
+  // if we have no matches, show an error and exit
+  if (matches.length === 0) {
     vscode.window.showErrorMessage('No strings found to add.\n\nDid you forget to add the .translatable token?');
     return;
   }
 
   // we have all the strings to add. display to the user to select which to add
-  const cleanedStrings = keysToAdd.map((key) => key.slice(1, key.indexOf(translatableToken) - 1));
+  const cleanedStrings = matches.map((key) => key.slice(1, key.indexOf(translatableToken) - 1));
   vscode.window.showQuickPick(cleanedStrings, {
     canPickMany: true,
-    placeHolder: 'Select strings to add to arb file',
+    placeHolder: 'Select translatable strings to add to arb file',
   }).then(async (selectedStrings) => {
     if (!selectedStrings) {
       // show an error that you need to select a string
@@ -276,11 +247,11 @@ function addAllToArbHandler(context: vscode.ExtensionContext) {
       return;
     }
 
-    // for the select strings, find the corresponding .translatable string
-
     for (const selectedString of selectedStrings) {
-      const string = keysToAdd.find((key) => key.includes(selectedString));
-      if (!string) {
+      const matchToReplace = matches.find((match) => match.includes(selectedString));
+      if (!matchToReplace) {
+        // show an error that the string was not found
+        vscode.window.showErrorMessage(`String not found: ${selectedString}`);
         continue;
       }
 
@@ -290,26 +261,32 @@ function addAllToArbHandler(context: vscode.ExtensionContext) {
       // first, modify the editor selection to
       // where this instance of the string is
       let range: vscode.Range | undefined;
-      for (let i = 0; i < document.lineCount; i++) {
-        const line = document.lineAt(i);
-        if (line.text.includes(string)) {
-          range = new vscode.Range(
-            new vscode.Position(i, line.text.indexOf(string)),
-            new vscode.Position(i, line.text.indexOf(string) + string.length)
-          );
 
-          // then, select the string
-          editor.selection = new vscode.Selection(range.start, range.end);
+      const startOfSelectedString = documentContents.indexOf(matchToReplace);
+      const endOfSelectedString = startOfSelectedString + matchToReplace.length;      
+      
+      range = new vscode.Range(
+        // need to find the start, and end, which may span across multiple lines. .translatable may be on its own line.
+        new vscode.Position(document.positionAt(startOfSelectedString).line, document.positionAt(startOfSelectedString).character),
+        new vscode.Position(document.positionAt(endOfSelectedString).line, document.positionAt(endOfSelectedString).character),
+      );
 
-          // scroll to the selection
-          editor.revealRange(range);
-
-          await addSelectionToArbHandler(context, true, editor.selection);
-
-          // and then wait a bit before moving on
-          await new Promise((resolve) => setTimeout(resolve, 250));
-        }
+      if (!range) { 
+        // show we are skipping
+        vscode.window.showErrorMessage(`Failed to find range for string: ${selectedString}`);
+        continue;
       }
+
+      // then, select the string
+      editor.selection = new vscode.Selection(range.start, range.end);
+
+      // scroll to the selection
+      editor.revealRange(range);
+
+      await addSelectionToArbHandler(context, true, editor.selection);
+
+      // and then wait a bit before moving on
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
   });
 }
