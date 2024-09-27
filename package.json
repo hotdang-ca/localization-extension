@@ -4,7 +4,7 @@
   "icon": "vsbl-translate-icon.png",
   "publisher": "vsbl",
   "description": "A VSCode extension for modifying VSBL ARB translation files in Flutter projects.",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "engines": {
     "vscode": "^1.78.0"
   },
