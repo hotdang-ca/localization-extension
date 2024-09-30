@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as cp from 'child_process';
+import { TranslatableStringMatch, TranslatableStringTreeviewProvider } from './treeviewProvider';
 
 /**
  * The token used to identify translatable strings in the editor
@@ -17,11 +18,88 @@ const translatableToken = '.translatable';
  */
 const translationPrefix = 'LocalizationProvider.instance.l10n';
 
+async function scanDirectoryForRegexMatches(directory: string, regex: RegExp, matches: TranslatableStringMatch[]) {
+  const files = await fs.promises.readdir(directory);
+
+  for (const file of files) {
+    const fullPath = path.join(directory, file);
+    const stat = await fs.promises.stat(fullPath);
+
+    if (stat.isDirectory()) {
+      await scanDirectoryForRegexMatches(fullPath, regex, matches);
+    } else {
+      if (!file.endsWith('.dart')) {
+        continue;
+      }
+
+      const content = await fs.promises.readFile(fullPath, 'utf-8');
+      
+      // find a match. Ensure we find all matches in the file
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(content))) {
+        matches.push(
+          new TranslatableStringMatch(
+            file.split('/').pop()!,
+            fullPath,
+            match[0],
+            vscode.TreeItemCollapsibleState.None,
+        ));
+      }
+      // if (match) {
+      //   matches.push(
+      //     new TranslatableStringMatch(
+      //       file.split('/').pop()!,
+      //       fullPath,
+      //       match[0],
+      //       vscode.TreeItemCollapsibleState.None,
+      //   ));
+      // }
+    }
+  }
+}
+
+
 /**
  * Main Entrypoint for the extension
  * @param context - the vscode extension context
  */
 export function activate(context: vscode.ExtensionContext) {
+  const treeviewProvider = new TranslatableStringTreeviewProvider();
+  vscode.window.createTreeView('translatableMatches', { treeDataProvider: treeviewProvider });
+  
+  let scanWorkspaceForMatches = vscode.commands.registerCommand('extension.scanWorkspaceForMatches', async () => {
+    const regex = new RegExp(/(["'].*["'])\n?\s*\.translatable/gm);
+    const matches: TranslatableStringMatch[] = [];
+
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    
+    if (workspaceFolders) {
+      for (const folder of workspaceFolders) {
+        // get subdirectories of this workspace folder
+        const subdirectories = await fs.promises.readdir(folder.uri.fsPath);
+        
+        for (const subdirectory of subdirectories) {
+          // is it a file? skip
+          const stat = await fs.promises.stat(path.join(folder.uri.fsPath, subdirectory));
+          if (!stat.isDirectory()) {
+            continue;
+          }
+
+          const fullPath = path.join(folder.uri.fsPath, subdirectory);
+          // message that we are scanning a folder
+          // vscode.window.showInformationMessage(`Scanning folder: ${fullPath}`);
+          await scanDirectoryForRegexMatches(fullPath, regex, matches);
+          // message that we are done scanning
+          // vscode.window.showInformationMessage('Done scanning for translatable strings');
+        }
+
+        treeviewProvider.setMatches(matches);
+      }
+    } else {
+      vscode.window.showErrorMessage('No workspace folders found');
+    }
+  });
+
   /**
    * Register the command to interactively request a variable name and translation
    */ 
@@ -38,6 +116,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(addArbDisposable);
   context.subscriptions.push(genL10nDisposable);
   context.subscriptions.push(addAllToArbDisposable);
+
+  context.subscriptions.push(scanWorkspaceForMatches);
 }
 
 /**
