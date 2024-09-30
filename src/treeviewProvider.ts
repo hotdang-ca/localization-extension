@@ -1,15 +1,16 @@
 import * as vscode from 'vscode';
 
 export class TranslatableStringTreeviewProvider implements vscode.TreeDataProvider<TranslatableStringMatch> {
-    private _onDidChangeTreeData: vscode.EventEmitter<TranslatableStringMatch | undefined> = new vscode.EventEmitter<TranslatableStringMatch | undefined>();
-    readonly onDidChangeTreeData: vscode.Event<TranslatableStringMatch | undefined> = this._onDidChangeTreeData.event;
+
+    private _onDidChangeTreeData: vscode.EventEmitter<TranslatableStringMatch | undefined | null | void> = new vscode.EventEmitter<TranslatableStringMatch | null | undefined | void>();
+    readonly onDidChangeTreeData: vscode.Event<TranslatableStringMatch | null | undefined | void> = this._onDidChangeTreeData.event;
 
     private matches: TranslatableStringMatch[] = [];
 
     constructor() {}
-
+    
     public refresh() {
-        this._onDidChangeTreeData.fire(undefined);
+        this._onDidChangeTreeData.fire();
     }
 
     getFilesInMatches() {
@@ -22,14 +23,25 @@ export class TranslatableStringTreeviewProvider implements vscode.TreeDataProvid
             }
         });
 
-        return uniqueFilesInMatches.map((match) => new TranslatableStringMatch(
-            match.file.split('/').pop()!, // TODO: maaaaybe just split on the first instance of the same workspaceFile folder name.
-            match.file, 
-            '',
-            0,
-            0,
-            vscode.TreeItemCollapsibleState.Collapsed,
-        ));
+        return uniqueFilesInMatches.map((match) => {
+            const baseFileName = match.file.split('/').pop()!;
+            const workspacePath = vscode.workspace.workspaceFolders![0]!.uri.fsPath;
+            const relativePathToFileFolder = match.file.replace(workspacePath, '')
+                .split('/')
+                .slice(1, -1)
+                .join('/');
+
+            const newMatch = new TranslatableStringMatch(
+                baseFileName,
+                match.file, 
+                '',
+                0,
+                0,
+                relativePathToFileFolder,
+                vscode.TreeItemCollapsibleState.Collapsed,
+            );
+            return newMatch;
+        });
     }
 
     getMatchesInFile(file: string): TranslatableStringMatch[] {
@@ -43,6 +55,7 @@ export class TranslatableStringTreeviewProvider implements vscode.TreeDataProvid
                 match.matchingText,
                 match.line,
                 match.column,
+                '',
                 vscode.TreeItemCollapsibleState.None,
             );
 
@@ -70,7 +83,6 @@ export class TranslatableStringTreeviewProvider implements vscode.TreeDataProvid
 
     getChildren(element?: TranslatableStringMatch): Thenable<TranslatableStringMatch[]> {
         if (element) {
-            // return the list of matches belonging to this element's file
             return Promise.resolve(this.getMatchesInFile(element.file));
         }
 
@@ -85,12 +97,14 @@ export class TranslatableStringMatch extends vscode.TreeItem {
         public readonly matchingText: string,
         public readonly line: number = 0,
         public readonly column: number = 0,
+        public readonly description: string,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
     ) {
         super(label, collapsibleState);
         
         this.file = file;
         this.matchingText = matchingText;
+        this.description = description;
 
         this.command = {
             command: 'vscode.open',

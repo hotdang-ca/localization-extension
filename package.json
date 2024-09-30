@@ -14,10 +14,24 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "menus": {
+      "view/title": [
+        {
+            "command": "extension.refreshEntry",
+            "when": "view == translatableMatches",
+            "group": "navigation"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "extension.scanWorkspaceForMatches",
         "title": "VSBL-l10n: Scan workspace for translatable strings"
+      },
+      {
+        "command": "extension.refreshEntry",
+        "title": "Refresh",
+        "icon": "$(refresh)"
       },
       {
         "command": "extension.modifyArb",

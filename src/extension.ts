@@ -48,6 +48,7 @@ async function scanDirectoryForRegexMatches(directory: string, regex: RegExp, ma
             match[0],
             line,
             column,
+            '',
             vscode.TreeItemCollapsibleState.None,
         ));
       }
@@ -62,8 +63,8 @@ async function scanDirectoryForRegexMatches(directory: string, regex: RegExp, ma
  */
 export function activate(context: vscode.ExtensionContext) {
   const treeviewProvider = new TranslatableStringTreeviewProvider();
-  vscode.window.createTreeView('translatableMatches', { treeDataProvider: treeviewProvider });
-  
+
+  vscode.window.registerTreeDataProvider('translatableMatches', treeviewProvider);
   let scanWorkspaceForMatches = vscode.commands.registerCommand('extension.scanWorkspaceForMatches', async () => {
     const regex = new RegExp(/(["'].*["'])\n?\s*\.translatable/gm);
     const matches: TranslatableStringMatch[] = [];
@@ -108,6 +109,8 @@ export function activate(context: vscode.ExtensionContext) {
     "extension.genL10n", runFlutterGenL10n);
   let addAllToArbDisposable = vscode.commands.registerCommand(
     "extension.addAllToArb", addAllToArbHandler);
+  let refresh = vscode.commands.registerCommand(
+    "extension.refreshEntry", () => treeviewProvider.refresh());
 
   context.subscriptions.push(modifyArbDisposable);
   context.subscriptions.push(addArbDisposable);
@@ -115,6 +118,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(addAllToArbDisposable);
 
   context.subscriptions.push(scanWorkspaceForMatches);
+  context.subscriptions.push(refresh);
 }
 
 /**
