@@ -37,23 +37,20 @@ async function scanDirectoryForRegexMatches(directory: string, regex: RegExp, ma
       // find a match. Ensure we find all matches in the file
       let match: RegExpExecArray | null;
       while ((match = regex.exec(content))) {
+        // what is the line number of the match?
+        const line = content.substr(0, match.index).split('\n').length;
+        const column = match.index - content.lastIndexOf('\n', match.index) - 1;
+
         matches.push(
           new TranslatableStringMatch(
             file.split('/').pop()!,
             fullPath,
             match[0],
+            line,
+            column,
             vscode.TreeItemCollapsibleState.None,
         ));
       }
-      // if (match) {
-      //   matches.push(
-      //     new TranslatableStringMatch(
-      //       file.split('/').pop()!,
-      //       fullPath,
-      //       match[0],
-      //       vscode.TreeItemCollapsibleState.None,
-      //   ));
-      // }
     }
   }
 }

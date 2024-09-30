@@ -23,22 +23,40 @@ export class TranslatableStringTreeviewProvider implements vscode.TreeDataProvid
         });
 
         return uniqueFilesInMatches.map((match) => new TranslatableStringMatch(
-            match.file.split('/').pop()!,
+            match.file.split('/').pop()!, // TODO: maaaaybe just split on the first instance of the same workspaceFile folder name.
             match.file, 
             '',
+            0,
+            0,
             vscode.TreeItemCollapsibleState.Collapsed,
         ));
     }
 
     getMatchesInFile(file: string): TranslatableStringMatch[] {
-        return this.matches.filter(match => match.file === file).map(
-            (match) => new TranslatableStringMatch(
+        const matchesBelongingToFile = this.matches.filter(match => match.file === file);
+        const preparedMatches = [];
+
+        for (const match of matchesBelongingToFile) {
+            const translatableStringMatch = new TranslatableStringMatch(
                 match.matchingText,
                 match.file,
                 match.matchingText,
+                match.line,
+                match.column,
                 vscode.TreeItemCollapsibleState.None,
-            )
-        );
+            );
+
+            // open file and jump to the line where the match is
+            translatableStringMatch.command = {
+                command: 'vscode.open',
+                title: 'Open File',
+                arguments: [vscode.Uri.file(file).with({ fragment: `${match.line},${match.column}` })],
+            };
+
+            preparedMatches.push(translatableStringMatch);
+        }
+
+        return preparedMatches;
     }
 
     public setMatches(matches: TranslatableStringMatch[]) {
@@ -65,6 +83,8 @@ export class TranslatableStringMatch extends vscode.TreeItem {
         public readonly label: string,
         public readonly file: string,
         public readonly matchingText: string,
+        public readonly line: number = 0,
+        public readonly column: number = 0,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
     ) {
         super(label, collapsibleState);
@@ -72,10 +92,10 @@ export class TranslatableStringMatch extends vscode.TreeItem {
         this.file = file;
         this.matchingText = matchingText;
 
-        // this.command = {
-        //     command: 'vscode.open',
-        //     title: 'Open File',
-        //     arguments: [vscode.Uri.file(file)],
-        // };
+        this.command = {
+            command: 'vscode.open',
+            title: 'Open File',
+            arguments: [vscode.Uri.file(file)],
+        };
     }
 }
