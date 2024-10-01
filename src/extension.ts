@@ -2,11 +2,17 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as cp from 'child_process';
+import { TranslatableStringMatch, TranslatableStringTreeviewProvider } from './treeviewProvider';
 
 /**
  * The token used to identify translatable strings in the editor
  */
 const translatableToken = '.translatable';
+
+/**
+ * The treeview
+ */
+let treeviewProvider: TranslatableStringTreeviewProvider;
 
 /**
  * The prefix used for replacing the key in the editor.
@@ -22,22 +28,71 @@ const translationPrefix = 'LocalizationProvider.instance.l10n';
  * @param context - the vscode extension context
  */
 export function activate(context: vscode.ExtensionContext) {
+  treeviewProvider = new TranslatableStringTreeviewProvider();
+
+  vscode.window.registerTreeDataProvider('translatableMatches', treeviewProvider);
+  
   /**
    * Register the command to interactively request a variable name and translation
-   */ 
-  let modifyArbDisposable = vscode.commands.registerCommand(
+  */ 
+  const modifyArbDisposable = vscode.commands.registerCommand(
     "extension.modifyArb", manuallyAddTranslationHandler);
-  let addArbDisposable = vscode.commands.registerCommand(
+  const addArbDisposable = vscode.commands.registerCommand(
     "extension.addToArb", addSelectionToArbHandler);
-  let genL10nDisposable = vscode.commands.registerCommand(
+  const genL10nDisposable = vscode.commands.registerCommand(
     "extension.genL10n", runFlutterGenL10n);
-  let addAllToArbDisposable = vscode.commands.registerCommand(
+  const addAllToArbDisposable = vscode.commands.registerCommand(
     "extension.addAllToArb", addAllToArbHandler);
+  const scanWorkspaceForMatchesDisposable = vscode.commands.registerCommand(
+    "extension.scanWorkspaceForMatches", scanDirectoryForRegexMatchesHandler);
+  const refresh = vscode.commands.registerCommand(
+    "extension.refreshEntry", () => treeviewProvider.refresh());
 
   context.subscriptions.push(modifyArbDisposable);
   context.subscriptions.push(addArbDisposable);
   context.subscriptions.push(genL10nDisposable);
   context.subscriptions.push(addAllToArbDisposable);
+
+  context.subscriptions.push(scanWorkspaceForMatchesDisposable);
+  context.subscriptions.push(refresh);
+}
+
+/**
+ * Handler for the scanWorkspaceForMatches command.
+ * 
+ * Scans the workspace for translatable strings, and displays them in the treeview.
+ */
+async function scanDirectoryForRegexMatchesHandler() {
+    const regex = new RegExp(/(["'].*["'])\n?\s*\.translatable/gm);
+    const matches: TranslatableStringMatch[] = [];
+
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    
+    if (workspaceFolders) {
+      for (const folder of workspaceFolders) {
+        // get subdirectories of this workspace folder
+        const subdirectories = await fs.promises.readdir(folder.uri.fsPath);
+        
+        for (const subdirectory of subdirectories) {
+          // is it a file? skip
+          const stat = await fs.promises.stat(path.join(folder.uri.fsPath, subdirectory));
+          if (!stat.isDirectory()) {
+            continue;
+          }
+
+          const fullPath = path.join(folder.uri.fsPath, subdirectory);
+          // message that we are scanning a folder
+          // vscode.window.showInformationMessage(`Scanning folder: ${fullPath}`);
+          await scanDirectoryForRegexMatches(fullPath, regex, matches);
+          // message that we are done scanning
+          // vscode.window.showInformationMessage('Done scanning for translatable strings');
+        }
+
+        treeviewProvider.setMatches(matches);
+      }
+    } else {
+      vscode.window.showErrorMessage('No workspace folders found');
+    }
 }
 
 /**
@@ -63,7 +118,11 @@ async function manuallyAddTranslationHandler(
   runFlutterGenL10n();
 }
 
-
+/**
+ * Handler for the addSelectionToArb command.
+ * 
+ * Adds the selected string to the arb file, and replaces the selection with the key.
+ */
 async function addStringToArb(str: string): Promise<string> {
   str = str.replace(/['"]/g, '');
 
@@ -291,7 +350,15 @@ function addAllToArbHandler(context: vscode.ExtensionContext) {
   });
 }
 
-
+/**
+ * Generates a key based on the string value
+ * 
+ * @param stringValue the string value to generate a key for
+ * @returns a key based on the string value
+ *   
+ * @example
+ * generateKeyFromString('Hello, World!') => 'helloWorld'
+ */
 function generateKeyFromString(stringValue: string): string {
   // remove " or ' from the string
   stringValue.replace(/['"]/g, '');
@@ -314,6 +381,9 @@ function generateKeyFromString(stringValue: string): string {
  * 
  * @param variableName the variable name to generate a key for
  * @returns a key based on the variable name and the filename
+ * 
+ * @example
+ * generateKey('helloWorld') => 'fileName_helloWorld'
  */
 function generateKey(variableName: string) {
   // Get filename from active editor
@@ -334,7 +404,13 @@ function generateKey(variableName: string) {
   return toCamelCase(`${snakeCaseFileName}_${snakeCaseVariableName}`);
 }
 
-
+/**
+ * Modifies the arb file with the specified key and translation
+ * 
+ * @param key the key to insert into the arb file
+ * @param translation the translation to insert into the arb file
+ * 
+ */
 function modifyArbFile(key: string, translation: string) {
   const arbPath = getArbPath();
   if (!arbPath) {
@@ -569,7 +645,7 @@ function getArbPath(): string | undefined {
 
   return path.join(
     vscode.workspace.workspaceFolders![0].uri.path,
-    'lib/src/l10n/arb/app_en.arb',
+    'lib/src/l10n/arb/app_en.arb', // TODO: possibly search the workspace for the arb file, or let the user specify it
   );
 };
 
@@ -643,3 +719,47 @@ function replaceSelectionWithKey(
   });
 }
 
+/**
+ * Recursively scans a directory for translatable strings
+ * 
+ * @param directory the directory to scan
+ * @param regex the rexex to use for the search
+ * @param matches the array to store the matches in; passed in by reference
+ * 
+ * @returns a promise that resolves when the scan is complete
+ */
+async function scanDirectoryForRegexMatches(directory: string, regex: RegExp, matches: TranslatableStringMatch[]) {
+  const files = await fs.promises.readdir(directory);
+
+  for (const file of files) {
+    const fullPath = path.join(directory, file);
+    const stat = await fs.promises.stat(fullPath);
+
+    if (stat.isDirectory()) {
+      await scanDirectoryForRegexMatches(fullPath, regex, matches);
+    } else {
+      if (!file.endsWith('.dart')) {
+        continue;
+      }
+
+      const content = await fs.promises.readFile(fullPath, 'utf-8');
+      
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(content))) { // while we have a match
+        const line = content.substr(0, match.index).split('\n').length;
+        const column = match.index - content.lastIndexOf('\n', match.index) - 1;
+
+        matches.push(
+          new TranslatableStringMatch(
+            file.split('/').pop()!,
+            fullPath,
+            match[0],
+            line,
+            column,
+            '',
+            vscode.TreeItemCollapsibleState.None,
+        ));
+      }
+    }
+  }
+}
