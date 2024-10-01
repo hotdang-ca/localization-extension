@@ -10,6 +10,11 @@ import { TranslatableStringMatch, TranslatableStringTreeviewProvider } from './t
 const translatableToken = '.translatable';
 
 /**
+ * The treeview
+ */
+let treeviewProvider: TranslatableStringTreeviewProvider;
+
+/**
  * The prefix used for replacing the key in the editor.
  * 
  * This could be a preference in the future. For now, it's hardcoded
@@ -18,54 +23,46 @@ const translatableToken = '.translatable';
  */
 const translationPrefix = 'LocalizationProvider.instance.l10n';
 
-async function scanDirectoryForRegexMatches(directory: string, regex: RegExp, matches: TranslatableStringMatch[]) {
-  const files = await fs.promises.readdir(directory);
-
-  for (const file of files) {
-    const fullPath = path.join(directory, file);
-    const stat = await fs.promises.stat(fullPath);
-
-    if (stat.isDirectory()) {
-      await scanDirectoryForRegexMatches(fullPath, regex, matches);
-    } else {
-      if (!file.endsWith('.dart')) {
-        continue;
-      }
-
-      const content = await fs.promises.readFile(fullPath, 'utf-8');
-      
-      // find a match. Ensure we find all matches in the file
-      let match: RegExpExecArray | null;
-      while ((match = regex.exec(content))) {
-        // what is the line number of the match?
-        const line = content.substr(0, match.index).split('\n').length;
-        const column = match.index - content.lastIndexOf('\n', match.index) - 1;
-
-        matches.push(
-          new TranslatableStringMatch(
-            file.split('/').pop()!,
-            fullPath,
-            match[0],
-            line,
-            column,
-            '',
-            vscode.TreeItemCollapsibleState.None,
-        ));
-      }
-    }
-  }
-}
-
-
 /**
  * Main Entrypoint for the extension
  * @param context - the vscode extension context
  */
 export function activate(context: vscode.ExtensionContext) {
-  const treeviewProvider = new TranslatableStringTreeviewProvider();
+  treeviewProvider = new TranslatableStringTreeviewProvider();
 
   vscode.window.registerTreeDataProvider('translatableMatches', treeviewProvider);
-  let scanWorkspaceForMatches = vscode.commands.registerCommand('extension.scanWorkspaceForMatches', async () => {
+  
+  /**
+   * Register the command to interactively request a variable name and translation
+  */ 
+  const modifyArbDisposable = vscode.commands.registerCommand(
+    "extension.modifyArb", manuallyAddTranslationHandler);
+  const addArbDisposable = vscode.commands.registerCommand(
+    "extension.addToArb", addSelectionToArbHandler);
+  const genL10nDisposable = vscode.commands.registerCommand(
+    "extension.genL10n", runFlutterGenL10n);
+  const addAllToArbDisposable = vscode.commands.registerCommand(
+    "extension.addAllToArb", addAllToArbHandler);
+  const scanWorkspaceForMatchesDisposable = vscode.commands.registerCommand(
+    "extension.scanWorkspaceForMatches", scanDirectoryForRegexMatchesHandler);
+  const refresh = vscode.commands.registerCommand(
+    "extension.refreshEntry", () => treeviewProvider.refresh());
+
+  context.subscriptions.push(modifyArbDisposable);
+  context.subscriptions.push(addArbDisposable);
+  context.subscriptions.push(genL10nDisposable);
+  context.subscriptions.push(addAllToArbDisposable);
+
+  context.subscriptions.push(scanWorkspaceForMatchesDisposable);
+  context.subscriptions.push(refresh);
+}
+
+/**
+ * Handler for the scanWorkspaceForMatches command.
+ * 
+ * Scans the workspace for translatable strings, and displays them in the treeview.
+ */
+async function scanDirectoryForRegexMatchesHandler() {
     const regex = new RegExp(/(["'].*["'])\n?\s*\.translatable/gm);
     const matches: TranslatableStringMatch[] = [];
 
@@ -96,29 +93,6 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       vscode.window.showErrorMessage('No workspace folders found');
     }
-  });
-
-  /**
-   * Register the command to interactively request a variable name and translation
-   */ 
-  let modifyArbDisposable = vscode.commands.registerCommand(
-    "extension.modifyArb", manuallyAddTranslationHandler);
-  let addArbDisposable = vscode.commands.registerCommand(
-    "extension.addToArb", addSelectionToArbHandler);
-  let genL10nDisposable = vscode.commands.registerCommand(
-    "extension.genL10n", runFlutterGenL10n);
-  let addAllToArbDisposable = vscode.commands.registerCommand(
-    "extension.addAllToArb", addAllToArbHandler);
-  let refresh = vscode.commands.registerCommand(
-    "extension.refreshEntry", () => treeviewProvider.refresh());
-
-  context.subscriptions.push(modifyArbDisposable);
-  context.subscriptions.push(addArbDisposable);
-  context.subscriptions.push(genL10nDisposable);
-  context.subscriptions.push(addAllToArbDisposable);
-
-  context.subscriptions.push(scanWorkspaceForMatches);
-  context.subscriptions.push(refresh);
 }
 
 /**
@@ -144,7 +118,11 @@ async function manuallyAddTranslationHandler(
   runFlutterGenL10n();
 }
 
-
+/**
+ * Handler for the addSelectionToArb command.
+ * 
+ * Adds the selected string to the arb file, and replaces the selection with the key.
+ */
 async function addStringToArb(str: string): Promise<string> {
   str = str.replace(/['"]/g, '');
 
@@ -372,7 +350,15 @@ function addAllToArbHandler(context: vscode.ExtensionContext) {
   });
 }
 
-
+/**
+ * Generates a key based on the string value
+ * 
+ * @param stringValue the string value to generate a key for
+ * @returns a key based on the string value
+ *   
+ * @example
+ * generateKeyFromString('Hello, World!') => 'helloWorld'
+ */
 function generateKeyFromString(stringValue: string): string {
   // remove " or ' from the string
   stringValue.replace(/['"]/g, '');
@@ -395,6 +381,9 @@ function generateKeyFromString(stringValue: string): string {
  * 
  * @param variableName the variable name to generate a key for
  * @returns a key based on the variable name and the filename
+ * 
+ * @example
+ * generateKey('helloWorld') => 'fileName_helloWorld'
  */
 function generateKey(variableName: string) {
   // Get filename from active editor
@@ -415,7 +404,13 @@ function generateKey(variableName: string) {
   return toCamelCase(`${snakeCaseFileName}_${snakeCaseVariableName}`);
 }
 
-
+/**
+ * Modifies the arb file with the specified key and translation
+ * 
+ * @param key the key to insert into the arb file
+ * @param translation the translation to insert into the arb file
+ * 
+ */
 function modifyArbFile(key: string, translation: string) {
   const arbPath = getArbPath();
   if (!arbPath) {
@@ -650,7 +645,7 @@ function getArbPath(): string | undefined {
 
   return path.join(
     vscode.workspace.workspaceFolders![0].uri.path,
-    'lib/src/l10n/arb/app_en.arb',
+    'lib/src/l10n/arb/app_en.arb', // TODO: possibly search the workspace for the arb file, or let the user specify it
   );
 };
 
@@ -724,3 +719,47 @@ function replaceSelectionWithKey(
   });
 }
 
+/**
+ * Recursively scans a directory for translatable strings
+ * 
+ * @param directory the directory to scan
+ * @param regex the rexex to use for the search
+ * @param matches the array to store the matches in; passed in by reference
+ * 
+ * @returns a promise that resolves when the scan is complete
+ */
+async function scanDirectoryForRegexMatches(directory: string, regex: RegExp, matches: TranslatableStringMatch[]) {
+  const files = await fs.promises.readdir(directory);
+
+  for (const file of files) {
+    const fullPath = path.join(directory, file);
+    const stat = await fs.promises.stat(fullPath);
+
+    if (stat.isDirectory()) {
+      await scanDirectoryForRegexMatches(fullPath, regex, matches);
+    } else {
+      if (!file.endsWith('.dart')) {
+        continue;
+      }
+
+      const content = await fs.promises.readFile(fullPath, 'utf-8');
+      
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(content))) { // while we have a match
+        const line = content.substr(0, match.index).split('\n').length;
+        const column = match.index - content.lastIndexOf('\n', match.index) - 1;
+
+        matches.push(
+          new TranslatableStringMatch(
+            file.split('/').pop()!,
+            fullPath,
+            match[0],
+            line,
+            column,
+            '',
+            vscode.TreeItemCollapsibleState.None,
+        ));
+      }
+    }
+  }
+}
