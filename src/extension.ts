@@ -5,6 +5,11 @@ import * as cp from 'child_process';
 import { TranslatableStringMatch, TranslatableStringTreeviewProvider } from './treeviewProvider';
 
 /**
+ * The path to the arb file in the workspace
+ */
+let pathToArbFile: string | undefined;
+
+/**
  * The token used to identify translatable strings in the editor
  */
 const translatableToken = '.translatable';
@@ -27,14 +32,20 @@ const translationPrefix = 'LocalizationProvider.instance.l10n';
  * Main Entrypoint for the extension
  * @param context - the vscode extension context
  */
-export function activate(context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext) {    
+
+  // Create the treeview
   treeviewProvider = new TranslatableStringTreeviewProvider();
 
   vscode.window.registerTreeDataProvider('translatableMatches', treeviewProvider);
   
   /**
    * Register the command to interactively request a variable name and translation
-  */ 
+   */ 
+
+  // Register the command to initialize the arb path for the workspace
+  const initializeArbPathDisposable = vscode.commands.registerCommand(
+    "extension.initializeArbPath", () => initializeArbPathForWorkspaceHandler(context));
   const modifyArbDisposable = vscode.commands.registerCommand(
     "extension.modifyArb", manuallyAddTranslationHandler);
   const addArbDisposable = vscode.commands.registerCommand(
@@ -48,6 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
   const refresh = vscode.commands.registerCommand(
     "extension.refreshEntry", () => treeviewProvider.refresh());
 
+  context.subscriptions.push(initializeArbPathDisposable);
   context.subscriptions.push(modifyArbDisposable);
   context.subscriptions.push(addArbDisposable);
   context.subscriptions.push(genL10nDisposable);
@@ -55,6 +67,26 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(scanWorkspaceForMatchesDisposable);
   context.subscriptions.push(refresh);
+}
+
+/**
+ * Handler for the initializeArbPathForWorkspace command.
+ * 
+ * Initializes the path to the arb file in the workspace.
+ * 
+ * @param context - the vscode extension context
+ */
+async function initializeArbPathForWorkspaceHandler(context: vscode.ExtensionContext) {
+  initializeArbPathForWorkspace(context).then((arbPath) => {
+    if (!arbPath) {
+      return;
+    }
+
+    // TODO: determine if it is a usable, valid arb file?
+    pathToArbFile = arbPath;
+    // show a message that we are using the arb file
+    vscode.window.showInformationMessage(`Using ARB file: ${pathToArbFile}`);
+  });
 }
 
 /**
@@ -195,7 +227,7 @@ async function addStringToArb(str: string): Promise<string> {
       continue;
     }
 
-    vscode.window.showErrorMessage(`String already exists with key: ${key}`);
+    vscode.window.showInformationMessage(`String already exists with key: ${key}`);
     // modifyDartFile(key);
     return key;
   }
@@ -412,12 +444,11 @@ function generateKey(variableName: string) {
  * 
  */
 function modifyArbFile(key: string, translation: string) {
-  const arbPath = getArbPath();
-  if (!arbPath) {
+  if (!pathToArbFile) {
     return;
   }
 
-  let arbRawData: string = fs.readFileSync(arbPath, 'utf8');
+  let arbRawData: string = fs.readFileSync(pathToArbFile, 'utf8');
   if (!arbRawData) {
     vscode.window.showErrorMessage('Failed to read ARB file');
     return;
@@ -435,7 +466,7 @@ function modifyArbFile(key: string, translation: string) {
 
   try {
     const arbContentString = JSON.stringify(arbContent, null, 2);
-    fs.writeFileSync(arbPath, arbContentString, 'utf8');
+    fs.writeFileSync(pathToArbFile, arbContentString, 'utf8');
     vscode.window.showInformationMessage(
       'Successfully updated ARB file!'
     );
@@ -472,7 +503,7 @@ function modifyDartFile(key: string) {
 function runFlutterGenL10n() {
   const workspacePath = vscode.workspace.workspaceFolders![0].uri.fsPath;
   cp.exec(
-    'flutter gen-l10n',
+    'melos run l10n',
     { cwd: workspacePath },
     (err, _, stderr) => {
       if (err) {
@@ -487,7 +518,7 @@ function runFlutterGenL10n() {
       }
 
       vscode.window.showInformationMessage(
-        'Successfully run flutter gen-l10n!'
+        'Successfully ran flutter gen-l10n!'
       );
     }
   );
@@ -577,7 +608,7 @@ async function handleVariableString(
       continue;
     }
 
-    vscode.window.showErrorMessage(`String already exists with key: ${key}`);
+    vscode.window.showInformationMessage(`String already exists with key: ${key}`);
     replaceSelectionWithKey(key, selection); // TODO: what about the parameters??
     return;
   }
@@ -623,9 +654,8 @@ async function handleVariableString(
     placeholders: placeholders
   };
 
-  const arbPath = getArbPath();
   const arbDataString = JSON.stringify(arbContent, null, 2);
-  fs.writeFileSync(arbPath!, arbDataString, 'utf8');
+  fs.writeFileSync(pathToArbFile!, arbDataString, 'utf8');
   vscode.window.showInformationMessage(
     'Successfully updated ARB file!'
   );
@@ -633,21 +663,24 @@ async function handleVariableString(
   runFlutterGenL10n();
 }
 
-/**
- * Retrieves the path to the arb file in the workspace folder.
- * @returns the path to the arb file, or undefined if no workspace folder is found
- */
-function getArbPath(): string | undefined {
-  if (!vscode.workspace.workspaceFolders) {
-    vscode.window.showErrorMessage('No workspace folder found!');
-    return;
-  }
+// /**
+//  * Retrieves the path to the arb file in the workspace folder.
+//  * @returns the path to the arb file, or undefined if no workspace folder is found
+//  */
+// function getArbPath(): string | undefined {
+//   if (!vscode.workspace.workspaceFolders) {
+//     vscode.window.showErrorMessage('No workspace folder found!');
+//     return;
+//   }
+//   context.
+//   // retreive from momento
+//   // if not found, show a dialog to select the arb file
 
-  return path.join(
-    vscode.workspace.workspaceFolders![0].uri.path,
-    'lib/src/l10n/arb/app_en.arb', // TODO: possibly search the workspace for the arb file, or let the user specify it
-  );
-};
+//   return path.join(
+//     vscode.workspace.workspaceFolders![0].uri.path,
+//     'lib/src/l10n/arb/app_en.arb', // TODO: possibly search the workspace for the arb file, or let the user specify it
+//   );
+// };
 
 /**
  * Inserts required imports into the editor for the l10n package
@@ -658,7 +691,7 @@ function insertImports(editor: vscode.TextEditor) {
   // search for the l10n import, and if not, 
   // add to the top of the file
 
-  const importLine = `import 'package:vsbl/src/core/util/localization_provider.dart';`;
+  const importLine = `import 'package:vsbl_l10n/lib.dart';`;
   const document = editor.document;
   let foundImport = false;
 
@@ -686,9 +719,21 @@ function insertImports(editor: vscode.TextEditor) {
  * Retrieves the content of the arb file in the workspace folder.
  * @returns the content of the arb file as an object
  */
-function getArbContentFromWorkspace(): any {
-  const arbPath = getArbPath();
-  const arbData = fs.readFileSync(arbPath!, 'utf8');
+async function getArbContentFromWorkspace(): Promise<any> {
+  if (!pathToArbFile) {
+    let arbPath: string | undefined | null = await requestArbPathWithDialog();
+    // vscode.window.showErrorMessage('No ARB file specified for the workspace');
+    if (!arbPath && !pathToArbFile) {
+      return;
+    }
+
+    // save the arb path to the workspace state
+    vscode.workspace.getConfiguration('vsbl').update('arbPath', arbPath);
+
+    pathToArbFile ??= arbPath;
+  }
+
+  const arbData = fs.readFileSync(pathToArbFile!, 'utf8');
   if (!arbData) {
     vscode.window.showErrorMessage('Failed to read ARB file');
     throw new Error('Failed to read ARB file');
@@ -761,5 +806,70 @@ async function scanDirectoryForRegexMatches(directory: string, regex: RegExp, ma
         ));
       }
     }
+  }
+}
+
+/**
+ * Sets the path to the arb file in the workspace for the extension
+ * 
+ * @param context a VSCode ExtensionContext
+ * @returns the path to the arb file, or undefined if not set
+ * 
+ */
+async function initializeArbPathForWorkspace(context: vscode.ExtensionContext): Promise<string | undefined> {
+  let arbPath: string | undefined | null = context.workspaceState.get('arbPath') as string;
+  
+  // arbPath = null;
+
+  if (arbPath) {
+    return arbPath;
+  } else {
+    const arbPath = await requestArbPathWithDialog();
+    context.workspaceState.update('arbPath', arbPath);
+    return arbPath;
+  }
+}
+
+/**
+ * Requests the user to select an arb file
+ * 
+ * @returns the path to the selected arb file
+ */
+async function requestArbPathWithDialog(): Promise<string | undefined> {
+  const setAction = 'Select ARB file';
+  const ignoreAction = 'Nope';
+  const selectedAction = await vscode.window.showErrorMessage(
+    'No ARB file specified for the workspace. Did you want to set it?',
+    setAction,
+    ignoreAction,
+  );
+  
+  if (selectedAction === ignoreAction) {
+    vscode.window.showErrorMessage('No ARB file was specified. Some features may not work');
+    return;
+  } else if (selectedAction === undefined) {
+    vscode.window.showErrorMessage('No ARB file was specified. Some features may not work');
+    return;
+  } else {
+    // selectedAction === setAction
+    // show a file dialog to select the arb file
+    await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      filters: {
+        // eslint-disable-next-line @typescript-eslint/naming-convention
+        'Base-Language ARB File': ['arb'],
+      },
+    }).then((selectedArbPath) => {
+      if (!selectedArbPath) {
+        vscode.window.showErrorMessage('No ARB file was specified. Some features may not work.');
+        return;
+      }
+
+      let arbPath = selectedArbPath[0].fsPath;
+      pathToArbFile = arbPath;
+      Promise.resolve(arbPath);
+    });
   }
 }

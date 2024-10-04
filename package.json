@@ -25,6 +25,10 @@
     },
     "commands": [
       {
+        "command": "extension.initializeArbPath",
+        "title": "VSBL-l10n: Initialize ARB file path"
+      },
+      {
         "command": "extension.scanWorkspaceForMatches",
         "title": "VSBL-l10n: Scan workspace for translatable strings"
       },
